@@ -27,42 +27,20 @@ We have engineered a physical drive-by-wire prototype governed by an independent
 
 The physical vehicle operates on a distributed edge-computing model:
 
-1. **The Edge Microcontrollers (ESP32 / Arduino)**
+1. **The Edge Microcontrollers ( Arduino UNO Q)**
    - Responsible for direct hardware actuation (Motors, Relays, Servos).
    - Constantly streams analog sensor data (Gas, Alcohol, Temperature) up to the compute unit.
    - Listens for highest-priority interrupt signals from the Safety Manager.
-2. **The Main Compute Unit (Laptop/Jetson/Raspberry Pi)**
    - Runs the heavy AI Perception models (YOLOv8) and the Local Planner (TEB).
    - Houses the **Central Safety Manager**, which evaluates risk and commands the microcontrollers.
-3. **The Digital Twin Command Center (React)**
+2. **The Digital Twin Command Center (React)**
    - A live telemetry dashboard used to monitor the physical hardware health (PWM status, Relay armed state, Sensor readings) during the SIH presentation.
 
 ## 💻 Tech Stack
-*   **Hardware & Firmware:** ESP32, C++ (Arduino Core), L298N Motor Controllers, MQ-X Sensors, 5V Relays, mmWave Sensors.
+*   **Hardware & Firmware:** Arduimo UNO Q, C++ (Arduino Core), L298N Motor Controllers, MQ-X Sensors, 5V Relays, mmWave Sensors,MPU6050, DHT11, GPS, YDLidar.
 *   **Control Server:** Python 3, Asyncio, WebSockets.
 *   **Digital Twin UI:** React 18, Vite, Tailwind CSS v4, HTML5 Canvas.
 
-## ⚙️ Hardware Setup & Quick Start
-
-### 1. Flashing the ESP32
-Open `microcontroller/arduino/esp32_wifi_node.ino` in the Arduino IDE. 
-Update your `ssid` and `password`, then flash the code to your ESP32. Ensure your motor drivers and relays are wired to the GPIO pins defined in the sketch.
-
-### 2. Starting the Control Server & Dashboard
-On the main compute unit connected to the same WiFi network:
-
-```bash
-# Clone the repository
-git clone https://github.com/YOUR-USERNAME/cognitive-autonomous-vehicle.git
-
-# 1. Start the Python Control Server (Bridges Hardware to UI)
-python standalone_demo.py
-
-# 2. Start the Digital Twin Dashboard (In a new terminal)
-cd av_command_center
-npm install
-npm run dev
-```
 
 ## 🧪 Hardware Safety Scenarios (SIH Demo)
 
