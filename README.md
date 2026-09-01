@@ -1,6 +1,5 @@
-<div align="center">
-  <img src="https://img.shields.io/badge/Status-SIH%20Finalist-success?style=for-the-badge" alt="SIH Status" />
-  <img src="https://img.shields.io/badge/Hardware-ESP32%20%7C%20L298N%20%7C%20Sensors-orange?style=for-the-badge" alt="Hardware" />
+
+
   
   <h1>Cognitive Autonomous Vehicle (Hardware Platform)</h1>
   <h3>Drive-by-Wire & IoT Edge Safety Architecture</h3>
