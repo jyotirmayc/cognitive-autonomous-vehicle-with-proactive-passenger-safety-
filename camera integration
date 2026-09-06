@@ -1,0 +1,923 @@
+import cv2
+from ultralytics import YOLO
+
+# ============================================================
+# SMART VEHICLE AI SAFETY SYSTEM
+#
+# Features:
+# 1. Vehicle detection
+# 2. Approaching vehicle detection
+# 3. Very close vehicle detection
+# 4. Pedestrian detection
+# 5. Animal detection
+# 6. Vehicle-path safety detection
+# 7. Traffic light detection
+# 8. Red light  -> STOP
+# 9. Yellow     -> CAUTION
+# 10. Green      -> GO
+# 11. Person/animal in vehicle path -> STOP
+#
+# NO POTHOLE LOGIC
+# ============================================================
+
+
+# ============================================================
+# LOAD YOLO MODEL
+# ============================================================
+
+model = YOLO("yolo11n.pt")
+
+
+# ============================================================
+# OPEN CAMERA
+# ============================================================
+
+cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("ERROR: Could not open camera.")
+    exit()
+
+
+# ============================================================
+# OBJECT CATEGORIES
+# ============================================================
+
+# Vehicles whose movement is analyzed
+vehicle_objects = {
+    "car",
+    "motorcycle",
+    "bicycle",
+    "bus",
+    "truck"
+}
+
+
+# Pedestrians and animals
+# If they enter the vehicle path -> STOP
+vulnerable_objects = {
+    "person",
+    "dog",
+    "cat",
+    "cow",
+    "horse",
+    "sheep"
+}
+
+
+# ============================================================
+# VEHICLE MOVEMENT MEMORY
+# ============================================================
+
+previous_area = None
+
+missing_frames = 0
+
+movement = "NO OBJECT"
+
+decision = "GO"
+
+
+# ============================================================
+# SAFETY THRESHOLDS
+# ============================================================
+
+# If the detected vehicle occupies this percentage
+# of the camera image, consider it very close.
+
+VERY_CLOSE_PERCENT = 25.0
+
+
+# If vehicle bounding-box area increases by this
+# percentage compared with the previous frame,
+# consider the vehicle approaching.
+
+APPROACH_THRESHOLD = 3.0
+
+
+# If vehicle bounding-box area decreases by this
+# percentage, consider it moving away.
+
+AWAY_THRESHOLD = -3.0
+
+
+# ============================================================
+# VEHICLE PATH
+# ============================================================
+
+# The central portion of the camera image is considered
+# the approximate forward path of the vehicle.
+
+PATH_LEFT_PERCENT = 30.0
+
+PATH_RIGHT_PERCENT = 70.0
+
+
+# ============================================================
+# FUNCTION: CHECK VEHICLE PATH
+# ============================================================
+
+def is_in_vehicle_path(
+    x1,
+    y1,
+    x2,
+    y2,
+    frame_width,
+    frame_height
+):
+
+    # Calculate center of detected object
+
+    center_x = int((x1 + x2) / 2)
+
+    center_y = int((y1 + y2) / 2)
+
+
+    # Calculate vehicle-path boundaries
+
+    path_left = int(
+        frame_width * PATH_LEFT_PERCENT / 100
+    )
+
+    path_right = int(
+        frame_width * PATH_RIGHT_PERCENT / 100
+    )
+
+
+    # Ignore objects very high in the image.
+    # Objects lower in the image are more relevant
+    # to the vehicle's immediate path.
+
+    forward_zone = int(
+        frame_height * 0.25
+    )
+
+
+    # Check whether object is inside vehicle path
+
+    if (
+        path_left <= center_x <= path_right
+        and
+        center_y >= forward_zone
+    ):
+        return True
+
+    return False
+
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+
+while True:
+
+    # ========================================================
+    # READ CAMERA FRAME
+    # ========================================================
+
+    ret, frame = cap.read()
+
+
+    if not ret:
+
+        print("ERROR: Camera frame not received.")
+
+        continue
+
+
+    # ========================================================
+    # FRAME INFORMATION
+    # ========================================================
+
+    frame_height, frame_width = frame.shape[:2]
+
+    frame_area = frame_width * frame_height
+
+
+    # ========================================================
+    # YOLO DETECTION
+    # ========================================================
+
+    results = model(
+        frame,
+        verbose=False
+    )
+
+
+    # ========================================================
+    # RESET VARIABLES
+    # ========================================================
+
+    largest_vehicle_area = 0
+
+    best_vehicle_box = None
+
+    best_vehicle_label = ""
+
+
+    # --------------------------------------------------------
+    # VULNERABLE OBJECT STATUS
+    # --------------------------------------------------------
+
+    vulnerable_detected = False
+
+    vulnerable_in_path = False
+
+    vulnerable_label = ""
+
+
+    # --------------------------------------------------------
+    # TRAFFIC LIGHT
+    # --------------------------------------------------------
+
+    traffic_light_color = "UNKNOWN"
+
+
+    # ========================================================
+    # PROCESS ALL YOLO DETECTIONS
+    # ========================================================
+
+    for result in results:
+
+        for box in result.boxes:
+
+            # =================================================
+            # CLASS AND CONFIDENCE
+            # =================================================
+
+            class_id = int(box.cls[0])
+
+            label = model.names[class_id]
+
+            confidence = float(box.conf[0])
+
+
+            # =================================================
+            # IGNORE VERY LOW CONFIDENCE DETECTIONS
+            # =================================================
+
+            if confidence < 0.35:
+
+                continue
+
+
+            # =================================================
+            # GET BOUNDING BOX
+            # =================================================
+
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
+
+
+            # Keep coordinates inside image
+
+            x1 = max(0, x1)
+
+            y1 = max(0, y1)
+
+            x2 = min(frame_width, x2)
+
+            y2 = min(frame_height, y2)
+
+
+            # =================================================
+            # TRAFFIC LIGHT
+            # =================================================
+
+            if label == "traffic light":
+
+                roi = frame[y1:y2, x1:x2]
+
+
+                if roi.size > 0:
+
+                    # Convert image from BGR to HSV
+
+                    hsv = cv2.cvtColor(
+                        roi,
+                        cv2.COLOR_BGR2HSV
+                    )
+
+
+                    # =================================================
+                    # RED MASK
+                    # =================================================
+
+                    red1 = cv2.inRange(
+                        hsv,
+                        (0, 100, 100),
+                        (10, 255, 255)
+                    )
+
+
+                    red2 = cv2.inRange(
+                        hsv,
+                        (170, 100, 100),
+                        (180, 255, 255)
+                    )
+
+
+                    red_pixels = (
+                        cv2.countNonZero(red1)
+                        +
+                        cv2.countNonZero(red2)
+                    )
+
+
+                    # =================================================
+                    # YELLOW MASK
+                    # =================================================
+
+                    yellow = cv2.inRange(
+                        hsv,
+                        (18, 80, 80),
+                        (38, 255, 255)
+                    )
+
+
+                    yellow_pixels = cv2.countNonZero(
+                        yellow
+                    )
+
+
+                    # =================================================
+                    # GREEN MASK
+                    # =================================================
+
+                    green = cv2.inRange(
+                        hsv,
+                        (35, 50, 50),
+                        (95, 255, 255)
+                    )
+
+
+                    green_pixels = cv2.countNonZero(
+                        green
+                    )
+
+
+                    # =================================================
+                    # FIND DOMINANT COLOR
+                    # =================================================
+
+                    colors = {
+                        "RED": red_pixels,
+                        "YELLOW": yellow_pixels,
+                        "GREEN": green_pixels
+                    }
+
+
+                    detected_color = max(
+                        colors,
+                        key=colors.get
+                    )
+
+
+                    # Require minimum color pixels
+
+                    if colors[detected_color] >= 10:
+
+                        traffic_light_color = (
+                            detected_color
+                        )
+
+
+                # =================================================
+                # DRAW TRAFFIC LIGHT
+                # =================================================
+
+                cv2.rectangle(
+                    frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (255, 255, 0),
+                    2
+                )
+
+
+                cv2.putText(
+                    frame,
+                    "TRAFFIC LIGHT",
+                    (
+                        x1,
+                        max(25, y1 - 10)
+                    ),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 0),
+                    2
+                )
+
+
+            # =================================================
+            # PEDESTRIAN / ANIMAL
+            # =================================================
+
+            elif label in vulnerable_objects:
+
+                vulnerable_detected = True
+
+
+                # Check if the object is in vehicle path
+
+                in_path = is_in_vehicle_path(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    frame_width,
+                    frame_height
+                )
+
+
+                if in_path:
+
+                    vulnerable_in_path = True
+
+                    vulnerable_label = label
+
+
+                # =================================================
+                # DRAW PERSON / ANIMAL
+                # =================================================
+
+                cv2.rectangle(
+                    frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (0, 165, 255),
+                    3
+                )
+
+
+                cv2.putText(
+                    frame,
+                    label.upper(),
+                    (
+                        x1,
+                        max(25, y1 - 10)
+                    ),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 165, 255),
+                    2
+                )
+
+
+                # =================================================
+                # PATH WARNING
+                # =================================================
+
+                if in_path:
+
+                    cv2.putText(
+                        frame,
+                        "DANGER - IN VEHICLE PATH",
+                        (
+                            x1,
+                            min(
+                                frame_height - 10,
+                                y2 + 25
+                            )
+                        ),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (0, 0, 255),
+                        2
+                    )
+
+
+            # =================================================
+            # VEHICLE
+            # =================================================
+
+            elif label in vehicle_objects:
+
+                vehicle_area = (
+                    (x2 - x1)
+                    *
+                    (y2 - y1)
+                )
+
+
+                # Keep the largest vehicle
+
+                if vehicle_area > largest_vehicle_area:
+
+                    largest_vehicle_area = (
+                        vehicle_area
+                    )
+
+                    best_vehicle_box = (
+                        x1,
+                        y1,
+                        x2,
+                        y2
+                    )
+
+                    best_vehicle_label = (
+                        label
+                    )
+
+
+    # ========================================================
+    # VEHICLE MOVEMENT ANALYSIS
+    # ========================================================
+
+    if largest_vehicle_area > 0:
+
+        # Reset missing frame counter
+
+        missing_frames = 0
+
+
+        # Calculate vehicle size as percentage
+        # of camera image.
+
+        vehicle_percent = (
+            largest_vehicle_area
+            /
+            frame_area
+        ) * 100
+
+
+        # ====================================================
+        # VERY CLOSE VEHICLE
+        # ====================================================
+
+        if vehicle_percent >= VERY_CLOSE_PERCENT:
+
+            movement = "VERY CLOSE"
+
+            decision = "STOP"
+
+
+        # ====================================================
+        # COMPARE WITH PREVIOUS FRAME
+        # ====================================================
+
+        elif previous_area is not None:
+
+            change_percent = (
+                (
+                    largest_vehicle_area
+                    -
+                    previous_area
+                )
+                /
+                previous_area
+            ) * 100
+
+
+            # =================================================
+            # APPROACHING
+            # =================================================
+
+            if change_percent >= APPROACH_THRESHOLD:
+
+                movement = "APPROACHING"
+
+                decision = "STOP"
+
+
+            # =================================================
+            # MOVING AWAY
+            # =================================================
+
+            elif change_percent <= AWAY_THRESHOLD:
+
+                movement = "MOVING AWAY"
+
+                decision = "GO"
+
+
+            # =================================================
+            # STATIONARY
+            # =================================================
+
+            else:
+
+                movement = "STATIONARY"
+
+                decision = "GO"
+
+
+        # ====================================================
+        # FIRST DETECTION
+        # ====================================================
+
+        else:
+
+            movement = "DETECTED"
+
+            decision = "GO"
+
+
+        # Save current area
+
+        previous_area = largest_vehicle_area
+
+
+    # ========================================================
+    # NO VEHICLE DETECTED
+    # ========================================================
+
+    else:
+
+        missing_frames += 1
+
+        movement = "NO VEHICLE"
+
+
+        # After several frames without a vehicle,
+        # return to GO.
+
+        if missing_frames > 10:
+
+            decision = "GO"
+
+
+    # ========================================================
+    # TRAFFIC LIGHT SAFETY PRIORITY
+    # ========================================================
+
+    if traffic_light_color == "RED":
+
+        decision = "STOP"
+
+
+    elif traffic_light_color == "YELLOW":
+
+        decision = "CAUTION"
+
+
+    elif traffic_light_color == "GREEN":
+
+        # Green cannot override an approaching
+        # or very close vehicle.
+
+        if movement not in [
+            "APPROACHING",
+            "VERY CLOSE"
+        ]:
+
+            decision = "GO"
+
+
+    # ========================================================
+    # PEDESTRIAN / ANIMAL SAFETY PRIORITY
+    # ========================================================
+
+    if vulnerable_in_path:
+
+        # A person or animal in the vehicle path
+        # has very high priority.
+
+        decision = "STOP"
+
+
+    # ========================================================
+    # DRAW VEHICLE
+    # ========================================================
+
+    if best_vehicle_box is not None:
+
+        x1, y1, x2, y2 = (
+            best_vehicle_box
+        )
+
+
+        cv2.rectangle(
+            frame,
+            (x1, y1),
+            (x2, y2),
+            (0, 255, 0),
+            2
+        )
+
+
+        cv2.putText(
+            frame,
+            best_vehicle_label.upper(),
+            (
+                x1,
+                max(25, y1 - 10)
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2
+        )
+
+
+    # ========================================================
+    # DRAW VEHICLE PATH
+    # ========================================================
+
+    path_left = int(
+        frame_width * PATH_LEFT_PERCENT / 100
+    )
+
+    path_right = int(
+        frame_width * PATH_RIGHT_PERCENT / 100
+    )
+
+
+    path_top = int(
+        frame_height * 0.25
+    )
+
+
+    # Left boundary
+
+    cv2.line(
+        frame,
+        (path_left, path_top),
+        (path_left, frame_height),
+        (255, 0, 255),
+        2
+    )
+
+
+    # Right boundary
+
+    cv2.line(
+        frame,
+        (path_right, path_top),
+        (path_right, frame_height),
+        (255, 0, 255),
+        2
+    )
+
+
+    # Vehicle path label
+
+    cv2.putText(
+        frame,
+        "VEHICLE PATH",
+        (
+            path_left + 10,
+            frame_height - 20
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 0, 255),
+        2
+    )
+
+
+    # ========================================================
+    # VULNERABLE OBJECT STATUS
+    # ========================================================
+
+    if vulnerable_in_path:
+
+        vulnerable_text = (
+            "DANGER: "
+            + vulnerable_label.upper()
+            + " IN PATH"
+        )
+
+
+    elif vulnerable_detected:
+
+        vulnerable_text = (
+            "PERSON / ANIMAL DETECTED"
+        )
+
+
+    else:
+
+        vulnerable_text = (
+            "NO PERSON / ANIMAL"
+        )
+
+
+    # ========================================================
+    # DISPLAY MOVEMENT
+    # ========================================================
+
+    cv2.putText(
+        frame,
+        "Movement: " + movement,
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2
+    )
+
+
+    # ========================================================
+    # DISPLAY TRAFFIC LIGHT
+    # ========================================================
+
+    cv2.putText(
+        frame,
+        "Traffic Light: "
+        + traffic_light_color,
+        (20, 70),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2
+    )
+
+
+    # ========================================================
+    # DISPLAY PERSON / ANIMAL
+    # ========================================================
+
+    cv2.putText(
+        frame,
+        vulnerable_text,
+        (20, 105),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2
+    )
+
+
+    # ========================================================
+    # DISPLAY VEHICLE DECISION
+    # ========================================================
+
+    cv2.putText(
+        frame,
+        "VEHICLE: " + decision,
+        (20, 150),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.95,
+        (0, 0, 255),
+        3
+    )
+
+
+    # ========================================================
+    # DISPLAY OBJECT SIZE
+    # ========================================================
+
+    if largest_vehicle_area > 0:
+
+        object_size_percent = (
+            largest_vehicle_area
+            /
+            frame_area
+        ) * 100
+
+    else:
+
+        object_size_percent = 0
+
+
+    cv2.putText(
+        frame,
+        "Vehicle Size: "
+        + str(
+            round(
+                object_size_percent,
+                1
+            )
+        )
+        + "%",
+        (20, 185),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2
+    )
+
+
+    # ========================================================
+    # DISPLAY WINDOW
+    # ========================================================
+
+    cv2.imshow(
+        "SMART VEHICLE AI SAFETY SYSTEM",
+        frame
+    )
+
+
+    # ========================================================
+    # PRESS Q TO QUIT
+    # ========================================================
+
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord("q"):
+
+        break
+
+
+# ============================================================
+# CLEAN EXIT
+# ============================================================
+
+cap.release()
+
+cv2.destroyAllWindows()
+
+print("Smart Vehicle system stopped.")
