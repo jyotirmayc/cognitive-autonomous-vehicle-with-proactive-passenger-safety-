@@ -1,0 +1,3 @@
+[submodule "Dashboard"]
+	path = Dashboard
+	url = https://github.com/anweshlaha-10/SIH_26_Dashboard_Self-Driving-Vehicle.git
